@@ -63,9 +63,13 @@ if check_password():
     st.sidebar.header("🎙️ 聲音參數設定")
     
     VOICE_OPTIONS = {
-        "雲哲 (男 - 專業 Podcast)": "zh-TW-YunJheNeural",
-        "曉臻 (女 - 溫柔新聞)": "zh-TW-HsiaoChenNeural",
-        "曉雨 (女 - 活潑輕快)": "zh-TW-HsiaoYuNeural",
+"雲哲 (男 - 台灣專業首選)": "zh-TW-YunJheNeural",
+        "曉臻 (女 - 台灣溫柔說書)": "zh-TW-HsiaoChenNeural",
+        "雲希 (男 - 深度說書感)": "zh-CN-YunxiNeural",
+        "曉曉 (女 - 情感最豐富)": "zh-CN-XiaoxiaoNeural",
+        "雲健 (男 - 沉穩導師感)": "zh-CN-YunjianNeural",
+        "曉雨 (女 - 台灣活潑廣播)": "zh-TW-HsiaoYuNeural",
+        "Jenny (英 - 專業國際感)": "en-US-JennyNeural",
     }
     
     selected_voice = VOICE_OPTIONS[st.sidebar.selectbox("選擇配音員", list(VOICE_OPTIONS.keys()))]
