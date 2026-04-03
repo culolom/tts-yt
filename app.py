@@ -26,75 +26,87 @@ def check_password():
         return False
     return True
 
-# --- 2. 語音生成核心邏輯 (強制修正格式) ---
-async def generate_speech(text, voice, rate_val, pitch_val):
-    # 格式化語速：如果為 0，直接給 "+0%" (或是不要帶正號也可以)
-    # 實測證明：rate 使用 "+0%" 通常可以，但 pitch 絕對不能是 "+0%"
-    r = f"{rate_val:+d}%"
+# --- 2. 核心生成邏輯 (支援進度追蹤) ---
+async def generate_speech_with_progress(text_list, voice, rate_val, pitch_val, progress_bar, status_text):
+    combined_audio = b""
+    total = len(text_list)
     
-    # 強制修正 pitch：
-    # 如果 pitch_val 是 0，必須傳送 "+0Hz"，這在微軟服務中代表「原音、不變」
+    # 格式化語速與音高
+    r = f"{rate_val:+d}%"
     p = f"{pitch_val:+d}%" if pitch_val != 0 else "+0Hz"
     
-    communicate = edge_tts.Communicate(text, voice, rate=r, pitch=p)
-    
-    audio_data = b""
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_data += chunk["data"]
-    return audio_data
+    for i, line in enumerate(text_list):
+        if not line.strip():
+            continue
+            
+        # 更新進度條
+        percent_complete = (i + 1) / total
+        progress_bar.progress(percent_complete)
+        status_text.text(f"⏳ 正在處理第 {i+1}/{total} 段文字...")
+        
+        # 生成該段語音
+        communicate = edge_tts.Communicate(line, voice, rate=r, pitch=p)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                combined_audio += chunk["data"]
+                
+    return combined_audio
 
 # --- 3. 主程式介面 ---
 if check_password():
     st.title("🐹 倉鼠語音實驗室")
-    st.caption("輸入文案，一鍵轉換成 Podcast 或 YouTube 配音")
-
+    
     # --- 側邊欄設定 ---
     st.sidebar.header("🎙️ 聲音參數設定")
-
     VOICE_OPTIONS = {
         "曉臻 (女 - 溫柔/新聞)": "zh-TW-HsiaoChenNeural",
         "雲哲 (男 - 專業/Podcast)": "zh-TW-YunJheNeural",
         "曉雨 (女 - 輕快)": "zh-TW-HsiaoYuNeural",
     }
-
-    selected_voice_label = st.sidebar.selectbox("選擇配音員", list(VOICE_OPTIONS.keys()))
-    selected_voice = VOICE_OPTIONS[selected_voice_label]
-
-    # 設定滑桿
+    selected_voice = VOICE_OPTIONS[st.sidebar.selectbox("選擇配音員", list(VOICE_OPTIONS.keys()))]
     rate = st.sidebar.slider("語速 (Rate)", -50, 50, 0, format="%d%%")
     pitch = st.sidebar.slider("音高 (Pitch)", -50, 50, 0, format="%d%%")
     
-    st.sidebar.markdown("---")
     if st.sidebar.button("登出"):
         st.session_state["password_correct"] = False
         st.rerun()
 
     # --- 主要輸入區 ---
-    text_input = st.text_area("請輸入文案內容：", height=300, placeholder="在這裡貼上你的腳本...")
+    text_input = st.text_area("請輸入文案內容：", height=300, placeholder="建議按行分隔文案，進度條會更精準...")
 
     if st.button("🚀 開始生成語音", use_container_width=True):
         if not text_input.strip():
             st.error("請先輸入文字內容！")
         else:
-            with st.spinner("正在生成語音，請稍候..."):
-                try:
-                    # 使用 asyncio 執行
-                    audio_bytes = asyncio.run(generate_speech(text_input, selected_voice, rate, pitch))
-                    
-                    if audio_bytes:
-                        st.audio(audio_bytes, format="audio/mp3")
-                        st.download_button(
-                            label="💾 下載 MP3 檔案",
-                            data=audio_bytes,
-                            file_name="hamster_voice.mp3",
-                            mime="audio/mp3",
-                            use_container_width=True
-                        )
-                        st.success("✅ 生成成功！")
-                except Exception as e:
-                    st.error(f"發生錯誤：{str(e)}")
-                    st.info("💡 提示：如果依然顯示 pitch 錯誤，請嘗試稍微撥動一下音高滑桿（例如調成 +1%）試試看。")
+            # 將文字按行拆分，並過濾掉空行
+            text_lines = [line.strip() for line in text_input.split('\n') if line.strip()]
+            
+            # 建立進度條元件
+            progress_bar = st.progress(0)
+            status_text = st.empty() # 用來動態更新文字
+            
+            try:
+                # 執行語音生成
+                audio_bytes = asyncio.run(
+                    generate_speech_with_progress(
+                        text_lines, selected_voice, rate, pitch, progress_bar, status_text
+                    )
+                )
+                
+                # 完成後清除進度文字並顯示結果
+                status_text.success("🎉 語音生成完成！")
+                st.audio(audio_bytes, format="audio/mp3")
+                st.download_button(
+                    label="💾 下載 MP3 檔案",
+                    data=audio_bytes,
+                    file_name="hamster_voice.mp3",
+                    mime="audio/mp3",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"發生錯誤：{str(e)}")
+                progress_bar.empty()
+                status_text.empty()
 
     st.markdown("---")
-    st.info("💡 **小撇步**：\n- **雲哲** 是目前的 Podcast 首選。")
+    st.info("💡 **小撇步**：\n- 文案建議 **一段話換一行**，這樣生成時進度條會動得最自然。")
