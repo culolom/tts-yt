@@ -2,7 +2,6 @@ import streamlit as st
 import asyncio
 import edge_tts
 import io
-import re
 
 # 1. 頁面配置
 st.set_page_config(page_title="倉鼠語音實驗室", page_icon="🐹")
@@ -27,8 +26,8 @@ def check_password():
         return False
     return True
 
-# --- 2. 核心生成邏輯 (SSML 注入版) ---
-async def generate_speech_with_ssml(text_list, voice, rate_val, pitch_val, pause_ms, progress_bar, status_text):
+# --- 2. 核心生成邏輯 (標準安全版) ---
+async def generate_speech_safe(text_list, voice, rate_val, pitch_val, progress_bar, status_text):
     combined_audio = b""
     total = len(text_list)
     
@@ -41,38 +40,27 @@ async def generate_speech_with_ssml(text_list, voice, rate_val, pitch_val, pause
             continue
             
         progress_bar.progress((i + 1) / total)
-        status_text.text(f"⏳ 正在調教第 {i+1}/{total} 段語氣...")
+        status_text.text(f"⏳ 正在處理第 {i+1}/{total} 段語音...")
         
-        # 使用 SSML 注入停頓與語調控制
-        # 我們將每一行包裝成一個獨立的語音片段，並在結尾加上強制停頓
-        ssml_content = f"""
-        <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>
-            <voice name='{voice}'>
-                <prosody rate='{r}' pitch='{p}'>
-                    {line}
-                </prosody>
-                <break time='{pause_ms}ms' />
-            </voice>
-        </speak>
-        """
+        # 💡 去機器人感的關鍵：自動在每一行結尾加上「...」來強制 AI 停頓換氣
+        processed_line = line.strip() + "..." 
         
-        try:
-            communicate = edge_tts.Communicate(ssml_content, voice)
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    combined_audio += chunk["data"]
-        except Exception as e:
-            st.warning(f"第 {i+1} 段生成失敗，已跳過。錯誤：{e}")
+        # 使用內建參數，絕對不會讀出代碼
+        communicate = edge_tts.Communicate(processed_line, voice, rate=r, pitch=p)
+        
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                combined_audio += chunk["data"]
                 
     return combined_audio
 
 # --- 3. 主程式介面 ---
 if check_password():
-    st.title("🐹 倉鼠語音實驗室 `V3`")
-    st.caption("透過 SSML 注入呼吸感，讓 AI 聽起來更像真人。")
+    st.title("🐹 倉鼠語音實驗室")
+    st.caption("已修復讀出代碼的錯誤，現在可以安心生成了。")
 
     # --- 側邊欄設定 ---
-    st.sidebar.header("🎙️ 語音美化參數")
+    st.sidebar.header("🎙️ 聲音參數設定")
     
     VOICE_OPTIONS = {
         "雲哲 (男 - 專業 Podcast)": "zh-TW-YunJheNeural",
@@ -82,15 +70,12 @@ if check_password():
     
     selected_voice = VOICE_OPTIONS[st.sidebar.selectbox("選擇配音員", list(VOICE_OPTIONS.keys()))]
     
-    # 調速與音高
-    rate = st.sidebar.slider("語速 (Rate)", -50, 50, -10, format="%d%%", help="建議調低至 -10% 會更沉穩。")
+    # 推薦參數：語速稍慢更有質感
+    rate = st.sidebar.slider("語速 (Rate)", -50, 50, -10, format="%d%%")
     pitch = st.sidebar.slider("音高 (Pitch)", -20, 20, 0, format="%d%%")
     
-    # 呼吸感控制
-    pause_ms = st.sidebar.slider("段落停頓 (ms)", 0, 2000, 500, step=100, help="每一行結束後的停頓時間，500ms = 0.5秒。")
-    
     st.sidebar.markdown("---")
-    if st.sidebar.button("登出系統"):
+    if st.sidebar.button("登出"):
         st.session_state["password_correct"] = False
         st.rerun()
 
@@ -98,49 +83,42 @@ if check_password():
     text_input = st.text_area(
         "請輸入文案內容：", 
         height=300, 
-        placeholder="小提醒：\n1. 每一個『換行』都會觸發上面設定的停頓時間。\n2. 善用『，』和『。』能讓 AI 自動調整語氣。"
+        placeholder="把你的文案貼在這裡...\n每一行都會自動加上呼吸停頓。"
     )
 
-    if st.button("🚀 開始注入靈魂生成語音", use_container_width=True):
+    if st.button("🚀 開始生成語音", use_container_width=True):
         if not text_input.strip():
             st.error("請先輸入文字內容！")
         else:
-            # 預處理：過濾掉空行
+            # 依行拆分
             text_lines = [l.strip() for l in text_input.split('\n') if l.strip()]
             
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             try:
-                # 執行帶有 SSML 的語音生成
+                # 執行生成
                 audio_bytes = asyncio.run(
-                    generate_speech_with_ssml(
-                        text_lines, selected_voice, rate, pitch, pause_ms, progress_bar, status_text
+                    generate_speech_safe(
+                        text_lines, selected_voice, rate, pitch, progress_bar, status_text
                     )
                 )
                 
                 if audio_bytes:
-                    status_text.success(f"🎉 生成完成！總長度約 {len(audio_bytes)//1024} KB")
+                    status_text.success(f"🎉 生成完成！")
                     st.audio(audio_bytes, format="audio/mp3")
                     
                     st.download_button(
-                        label="💾 下載成品 MP3",
+                        label="💾 下載 MP3",
                         data=audio_bytes,
-                        file_name="hamster_pro_voice.mp3",
+                        file_name="money_book_voice.mp3",
                         mime="audio/mp3",
                         use_container_width=True
                     )
             except Exception as e:
-                st.error(f"系統崩潰：{str(e)}")
+                st.error(f"錯誤：{str(e)}")
                 progress_bar.empty()
                 status_text.empty()
 
-    # 底部攻略
     st.markdown("---")
-    with st.expander("🎨 如何讓語音更自然？（倉鼠心得）"):
-        st.markdown("""
-        * **文字加料**：遇到想強調的地方，可以加個空格或換行。
-        * **標點符號**：AI 看到『？』會自動上揚，看到『...』會略微沉思。
-        * **雲哲專屬**：將語速調至 **-15%**，停頓設為 **800ms**，非常適合《鼠辣觀點》那種深夜 Podcast 感。
-        * **終極招式**：生成後，在剪輯軟體放上一段 **Lofi 背景音樂**，機器味會瞬間消失 80%！
-        """)
+    st.info("💡 **倉鼠的去機器人感秘訣**：\n1. 推薦 **雲哲**，語速設為 **-10%** 到 **-15%**。\n2. 你的文案寫得很棒！在「你相信嗎？」後面多留一個空行，聽起來會更有懸念感。")
