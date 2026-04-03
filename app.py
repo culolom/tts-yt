@@ -11,7 +11,7 @@ def check_password():
     """如果密碼正確則返回 True，否則顯示輸入框。"""
     def password_entered():
         # 將密碼改為你想設定的字串
-        if st.session_state["password"] == "你的專屬密碼": 
+        if st.session_state["password"] == st.secrets["password"]:
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # 驗證後刪除暫存密碼避免洩露
         else:
