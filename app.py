@@ -26,14 +26,17 @@ def check_password():
         return False
     return True
 
-# --- 2. 核心生成邏輯 (標準安全版) ---
-async def generate_speech_safe(text_list, voice, rate_val, pitch_val, progress_bar, status_text):
+# --- 2. 核心生成邏輯 (支援精確停頓秒數) ---
+async def generate_speech_with_pause(text_list, voice, rate_val, pitch_val, pause_seconds, progress_bar, status_text):
     combined_audio = b""
     total = len(text_list)
     
     # 格式化語速與音高
     r = f"{rate_val:+d}%"
     p = f"{pitch_val:+d}%" if pitch_val != 0 else "+0Hz"
+    
+    # 將秒轉換為毫秒 (ms)
+    pause_ms = int(pause_seconds * 1000)
     
     for i, line in enumerate(text_list):
         if not line.strip():
@@ -42,11 +45,20 @@ async def generate_speech_safe(text_list, voice, rate_val, pitch_val, progress_b
         progress_bar.progress((i + 1) / total)
         status_text.text(f"⏳ 正在處理第 {i+1}/{total} 段語音...")
         
-        # 💡 去機器人感的關鍵：自動在每一行結尾加上「...」來強制 AI 停頓換氣
-        processed_line = line.strip() + "..." 
+        # 使用極簡 SSML 確保不被誤讀，同時注入停頓
+        # break time 指令會讓 AI 在這段文字讀完後安靜指定的時間
+        ssml = (
+            f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='zh-TW'>"
+            f"<voice name='{voice}'>"
+            f"<prosody rate='{r}' pitch='{p}'>"
+            f"{line.strip()}"
+            f"</prosody>"
+            f"<break time='{pause_ms}ms' />"
+            f"</voice>"
+            f"</speak>"
+        )
         
-        # 使用內建參數，絕對不會讀出代碼
-        communicate = edge_tts.Communicate(processed_line, voice, rate=r, pitch=p)
+        communicate = edge_tts.Communicate(ssml, voice)
         
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -57,7 +69,7 @@ async def generate_speech_safe(text_list, voice, rate_val, pitch_val, progress_b
 # --- 3. 主程式介面 ---
 if check_password():
     st.title("🐹 倉鼠語音實驗室")
-    st.caption("已修復讀出代碼的錯誤，現在可以安心生成了。")
+    st.caption("現在你可以自由調整每一行文案之間的空白時間了。")
 
     # --- 側邊欄設定 ---
     st.sidebar.header("🎙️ 聲音參數設定")
@@ -70,12 +82,22 @@ if check_password():
     
     selected_voice = VOICE_OPTIONS[st.sidebar.selectbox("選擇配音員", list(VOICE_OPTIONS.keys()))]
     
-    # 推薦參數：語速稍慢更有質感
+    # 參數滑桿
     rate = st.sidebar.slider("語速 (Rate)", -50, 50, -10, format="%d%%")
     pitch = st.sidebar.slider("音高 (Pitch)", -20, 20, 0, format="%d%%")
     
+    # ✨ 新功能：行間停頓滑桿
+    pause_duration = st.sidebar.slider(
+        "行間停頓 (秒)", 
+        min_value=0.0, 
+        max_value=5.0, 
+        value=0.8, 
+        step=0.1,
+        help="每一行結束後，AI 會安靜多久再讀下一行。推薦 0.5s - 1.2s。"
+    )
+    
     st.sidebar.markdown("---")
-    if st.sidebar.button("登出"):
+    if st.sidebar.button("登出系統"):
         st.session_state["password_correct"] = False
         st.rerun()
 
@@ -83,14 +105,14 @@ if check_password():
     text_input = st.text_area(
         "請輸入文案內容：", 
         height=300, 
-        placeholder="把你的文案貼在這裡...\n每一行都會自動加上呼吸停頓。"
+        placeholder="文案範例：\n第一行（停頓）\n第二行（停頓）..."
     )
 
     if st.button("🚀 開始生成語音", use_container_width=True):
         if not text_input.strip():
             st.error("請先輸入文字內容！")
         else:
-            # 依行拆分
+            # 依換行拆分
             text_lines = [l.strip() for l in text_input.split('\n') if l.strip()]
             
             progress_bar = st.progress(0)
@@ -99,8 +121,8 @@ if check_password():
             try:
                 # 執行生成
                 audio_bytes = asyncio.run(
-                    generate_speech_safe(
-                        text_lines, selected_voice, rate, pitch, progress_bar, status_text
+                    generate_speech_with_pause(
+                        text_lines, selected_voice, rate, pitch, pause_duration, progress_bar, status_text
                     )
                 )
                 
@@ -109,9 +131,9 @@ if check_password():
                     st.audio(audio_bytes, format="audio/mp3")
                     
                     st.download_button(
-                        label="💾 下載 MP3",
+                        label="💾 下載成品 MP3",
                         data=audio_bytes,
-                        file_name="money_book_voice.mp3",
+                        file_name="hamster_podcast.mp3",
                         mime="audio/mp3",
                         use_container_width=True
                     )
@@ -121,4 +143,4 @@ if check_password():
                 status_text.empty()
 
     st.markdown("---")
-    st.info("💡 **倉鼠的去機器人感秘訣**：\n1. 推薦 **雲哲**，語速設為 **-10%** 到 **-15%**。\n2. 你的文案寫得很棒！在「你相信嗎？」後面多留一個空行，聽起來會更有懸念感。")
+    st.info("💡 **倉鼠指南**：\n- **0.5s**：節奏緊湊，適合短影音。\n- **0.8s - 1.2s**：最自然的說話節奏，適合 Podcast。\n- **2.0s+**：適合需要給觀眾思考時間的深刻金句。")
